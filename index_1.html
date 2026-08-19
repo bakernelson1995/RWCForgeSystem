@@ -703,6 +703,7 @@
       </div>
       <div class="center">
         <button class="btn" id="btn-camera">Start Camera</button>
+        <button class="btn secondary" id="btn-scan-now" style="display:none;margin-left:8px;">Scan Now</button>
       </div>
       <div class="center" style="margin-top:8px;">
         <button class="action-link" id="btn-undo" style="display:none;">Undo last check-in</button>
@@ -1388,12 +1389,15 @@
   });
 
   function startCamera(){
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function(stream){
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+    }).then(function(stream){
       state.stream = stream;
       video.srcObject = stream;
       video.play();
       state.scanning = true;
       cameraBtn.textContent = 'Stop Camera';
+      document.getElementById('btn-scan-now').style.display = 'inline-flex';
       overlay.classList.add('hidden');
       requestAnimationFrame(scanLoop);
     }).catch(function(err){
@@ -1408,25 +1412,43 @@
     state.stream = null;
     state.scanning = false;
     cameraBtn.textContent = 'Start Camera';
+    document.getElementById('btn-scan-now').style.display = 'none';
     overlay.classList.remove('hidden');
     overlay.className = 'scan-overlay';
     overlay.innerHTML = '<div class="icon">📷</div><div class="msg">Camera off. Tap start to begin scanning.</div>';
   }
 
-  function scanLoop(){
-    if(!state.scanning) return;
-    if(video.readyState === video.HAVE_ENOUGH_DATA && !state.paused){
+  function captureAndDecode(){
+    if(video.readyState !== video.HAVE_ENOUGH_DATA) return null;
+    if(canvas.width !== video.videoWidth || canvas.height !== video.videoHeight){
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      var code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' });
-      if(code && code.data){
-        handleScan(code.data);
-      }
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' });
+  }
+
+  function scanLoop(){
+    if(!state.scanning) return;
+    if(!state.paused){
+      var code = captureAndDecode();
+      if(code && code.data){ handleScan(code.data); }
     }
     requestAnimationFrame(scanLoop);
   }
+
+  document.getElementById('btn-scan-now').addEventListener('click', function(){
+    if(!state.scanning || state.paused) return;
+    var code = captureAndDecode();
+    if(code && code.data){
+      handleScan(code.data);
+    } else {
+      showOverlay('err', '🔍', '', 'No QR code found — center the tag in the frame and try again.');
+      resumeAfter(1400);
+      state.paused = true;
+    }
+  });
 
   async function handleScan(text){
     state.paused = true;
